@@ -17,12 +17,13 @@ batch_sizes = from_csv(config["DEFAULT"]["batch_sizes"])
 prompt_lengths = from_csv(config["DEFAULT"]["prompt_lengths"])
 generation_lengths = from_csv(config["DEFAULT"]["generation_lengths"])
 tensor_parallel_sizes = from_csv(config["DEFAULT"]["tensor_parallel_sizes"])
+num_iterations = int(config["DEFAULT"]["num_iterations"])
 output_file = config["DEFAULT"]["output_file"]
 model = config["DEFAULT"]["model"]
 
 ds = load_dataset(dataset, "section", split = "test")
 prompts = ds[config["DEFAULT"]["dataset_key"]]
-prompts = prompts[:1000]
+#prompts = prompts[:1000]
 
 def write_out(line: str, mode: str = "a"):
     with open(output_file, mode) as file:
@@ -40,6 +41,7 @@ def generate_with_params(llm, sampling_params, prompts, prompt_length, batch_siz
     time_generating_tokens = 0.0
     tokens_generated = 0
 
+    prompts = prompts[:num_iterations * batch_size]
     for i in tqdm(range(0, len(prompts), batch_size)):
         batch_prompts = prompts[i : i + batch_size]
         batch_prompts_tokenized = []
