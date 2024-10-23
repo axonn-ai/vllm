@@ -48,7 +48,7 @@ def generate_with_params(llm, sampling_params, prompts, prompt_length, batch_siz
         for text in batch_prompts:
             ids = tokenizer.encode(text)[:prompt_length] # warns bc result of encode is too long, not an issue bc truncated after
             if len(ids) < prompt_length:
-               ids += ([tokenizer.pad_token_id] * (prompt_length - len(ids))) 
+               ids += ([tokenizer.eos_token_id] * (prompt_length - len(ids)))
             tp = TokensPrompt(prompt_token_ids = ids)
             batch_prompts_tokenized.append(tp)
         outputs = llm.generate(batch_prompts_tokenized, sampling_params)
