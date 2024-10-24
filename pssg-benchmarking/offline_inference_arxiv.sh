@@ -14,11 +14,11 @@ module load cudatoolkit/12.2
 
 cd ..
 source vllm_venv/bin/activate
-cd examples
+cd pssg-benchmarking
 
 export HF_HOME="$SCRATCH/hf_cache"
 export TRANSFORMERS_HOME="$SCRATCH/hf_cache"
 export HF_DATASETS_CACHE="$SCRATCH/hf_cache"
 export HF_ACCESS_TOKEN="TOKEN_HERE"
 
-python3 offline_inference_arxiv.py offline_inference_arxiv.ini &> offline_inference_arxiv.log
+python3 offline_inference_arxiv.py -c offline_inference_arxiv.ini &> offline_inference_arxiv.log
