@@ -6,7 +6,7 @@ import os
 import configparser
 from datetime import datetime
 import argparse
-
+import torch
 
 def from_csv(s) -> list[int]:
     return list(map(int, s.split(","))) if s else None
@@ -68,9 +68,9 @@ def generate_with_params(
             token_ids = output.outputs[0].token_ids
             token_count = len(token_ids)
             metrics = output.metrics
-            start = metrics.first_token_time
-            end = metrics.finished_time
-            duration += end - start
+            #start = metrics.first_token_time
+            #end = metrics.finished_time
+            #duration += end - start
             output_tokens_per_batch += token_count
 
         ### Average the duration over all prompts in the batch (all prompts are processed in parallel ideally)
