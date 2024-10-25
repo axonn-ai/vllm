@@ -44,4 +44,4 @@ PROMPT_LENGTH=$2
 # two MPI processes across two nodes.
 # The --rocm flag is required to support AMD GPUs inside the container.
 #srun  -N 1  --tasks-per-node 1 --gpus-per-task=4 apptainer exec --bind /lustre/orion/csc569/scratch/prajwal/vllm-mnt:/mnt/vllm-mnt --writable-tmpfs --workdir `pwd` --rocm test.sif ./set_env_vars_slurm.sh python examples/offline_inference.py
-srun -N 1 --tasks-per-node 1 --gpus-per-task=1 ./set_env_vars_slurm.sh python pssg-benchmarking/offline_inference_arxiv.py -c pssg-benchmarking/offline_inference_arxiv_${BATCH_SIZE}.ini -pl ${PROMPT_LENGTH} -o ./vllm_benchmarking_Llama31_8B_bs_${BATCH_SIZE}_pl_${PROMPT_LENGTH}.csv
+srun -N 1 --tasks-per-node 1 --gpus-per-task=1 ./set_env_vars_slurm.sh python pssg-benchmarking/offline_inference_arxiv.py -c pssg-benchmarking/configs/offline_inference_arxiv_${BATCH_SIZE}.ini -pl ${PROMPT_LENGTH} -o ./vllm_benchmarking_Llama31_8B_bs_${BATCH_SIZE}_pl_${PROMPT_LENGTH}.csv

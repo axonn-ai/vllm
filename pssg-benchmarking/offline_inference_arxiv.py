@@ -36,6 +36,8 @@ def generate_with_params(
     prompts = prompts[: (num_warmups + num_iterations) * batch_size]
     iter_num = 0
     num_valid_iters = 0
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
     for i in tqdm(range(0, len(prompts), batch_size)):
         batch_prompts = prompts[i : i + batch_size]
         batch_prompts_tokenized = []
@@ -51,7 +53,14 @@ def generate_with_params(
             batch_prompts_tokenized.append(tp)
 
         # TODO: Verify that vLLM processes prompts in parallel and does not break the batch
+        start.record()
         outputs = llm.generate(batch_prompts_tokenized, sampling_params)
+        end.record()
+
+        torch.cuda.synchronize()
+
+        # TODO: Need more fine-grained metrics going forward. vLLM does seem to be breaking prompts into smaller chunks. Until we verify that, this is a good estimate for duration to calculate throughput
+        batch_duration = start.elapsed_time(end)
 
         duration = 0
         output_tokens_per_batch = 0
@@ -64,8 +73,8 @@ def generate_with_params(
             duration += end - start
             output_tokens_per_batch += token_count
 
-        # Average the duration over all prompts in the batch (all prompts are processed in parallel ideally)
-        batch_duration = float(duration) / len(outputs)
+        ### Average the duration over all prompts in the batch (all prompts are processed in parallel ideally)
+        #batch_duration = float(duration) / len(outputs)
 
         if iter_num < num_warmups:  # Skip the warmup iterations
             pass
@@ -142,6 +151,7 @@ if __name__ == "__main__":
             enforce_eager=default_config.getboolean(
                 "eager_mode", fallback=False
             ),
+            #enable_chunked_prefill=False,
         )
         for bs in from_csv(default_config["batch_sizes"]):
             for pl in from_csv(default_config["prompt_lengths"]):

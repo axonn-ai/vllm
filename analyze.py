@@ -3,6 +3,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from setup_plot import *
+import numpy as np
+
+#matplotlib.use("TkAgg")
+
+setup()
+setup_global()
+
 DATA_FILE_PREFIX = "vllm_benchmarking_Llama31_8B_"
 NUM_FILES = 1
 
@@ -30,7 +38,15 @@ df = df.sort_values(by=["batch_size", "prompt_length", "generation_length"])
 # Plot the tokens_per_second for each batch size as a line plot with different prompt lengths
 # on the same plot
 
-df = df[df["generation_length"] == 1024]
-sns.lineplot(df, x="batch_size", y="tokens_per_sec", hue="prompt_length")
+#df = df[df["generation_length"] == 1024]
+plot_line_chart(df, x="batch_size", 
+                y="tokens_per_sec", 
+                hue="prompt_length",
+                xlabel="Batch Size", 
+                ylabel="Tokens per Second", 
+                title=f"Tokens per Second vs Batch Size\nGeneration Length = {1024}",
+                marker="o",
+                markersize=14,
+)
 
 plt.savefig("tokens_per_second.png")
