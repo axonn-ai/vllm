@@ -140,7 +140,7 @@ if __name__ == "__main__":
     write_out(
         outfile,
         "model,dataset,tensor_parallel_size,batch_size,"
-        "prompt_length,generation_length,tokens_per_sec",
+        "prompt_length,generation_length,tokens_per_ms",
         "w",
     )
 
