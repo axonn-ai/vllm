@@ -62,7 +62,7 @@ def plot_line_chart(
 ):
     """ Plot a line chart """
     plt.figure(figsize=figsize)
-    ax = sns.lineplot(data=df, x=x, y=y, **kwargs)
+    ax = sns.lineplot(data=df, x=x, y=y, palette=get_darker_colors(), **kwargs)
     ax.set_title(title, fontsize=title_fontsize)
     ax.set_xlabel(xlabel, fontsize=xlabel_fontsize)
     ax.set_ylabel(ylabel, fontsize=ylabel_fontsize)
