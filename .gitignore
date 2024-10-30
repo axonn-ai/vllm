@@ -202,3 +202,7 @@ benchmarks/*.json
 
 # Linting
 actionlint
+
+# PSSG-Benchmarking
+**/vllm_*.csv
+

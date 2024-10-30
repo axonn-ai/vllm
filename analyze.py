@@ -11,7 +11,7 @@ import numpy as np
 setup()
 setup_global()
 
-FOLDER_PATH = "Llama31_8B_TP2/"
+FOLDER_PATH = "Llama31_8B_TP4/"
 
 DATA_FILE_PREFIX = "vllm_benchmarking_Llama31_8B_"
 NUM_FILES = 1
