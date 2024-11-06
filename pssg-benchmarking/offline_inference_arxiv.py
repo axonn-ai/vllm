@@ -8,9 +8,13 @@ from datetime import datetime
 import argparse
 import torch
 
+# enable torch profiler, can also be set on cmd line
+os.environ["VLLM_TORCH_PROFILER_DIR"] = "./vllm_profile"
+
+PROFILE=False
+
 def from_csv(s) -> list[int]:
     return list(map(int, s.split(","))) if s else None
-
 
 def write_out(output_file, line: str, mode: str = "a"):
     with open(output_file, mode) as file:
@@ -26,6 +30,7 @@ def generate_with_params(
     generation_length,
     num_warmups,
     num_iterations,
+    profile=False
 ) -> list[int]:
     tokenizer = llm.get_tokenizer()
 
@@ -54,10 +59,16 @@ def generate_with_params(
 
         # TODO: Verify that vLLM processes prompts in parallel and does not break the batch
         start.record()
-        outputs = llm.generate(batch_prompts_tokenized, sampling_params)
-        end.record()
+        if iter_num == num_warmups and profile:
+            llm.start_profile()
 
+        outputs = llm.generate(batch_prompts_tokenized, sampling_params)
+        if iter_num == num_warmups and profile:
+            llm.stop_profile()
+
+        end.record()
         torch.cuda.synchronize()
+
 
         # TODO: Need more fine-grained metrics going forward. vLLM does seem to be breaking prompts into smaller chunks. Until we verify that, this is a good estimate for duration to calculate throughput
         batch_duration = start.elapsed_time(end)
@@ -74,7 +85,7 @@ def generate_with_params(
             output_tokens_per_batch += token_count
 
         ### Average the duration over all prompts in the batch (all prompts are processed in parallel ideally)
-        #batch_duration = float(duration) / len(outputs)
+        # batch_duration = float(duration) / len(outputs)
 
         if iter_num < num_warmups:  # Skip the warmup iterations
             pass
@@ -84,7 +95,9 @@ def generate_with_params(
             )
 
             num_valid_iters += 1
+
         iter_num += 1
+
 
     assert num_valid_iters == num_iterations
     avg_throughput_per_batch = float(throughput_per_batch) / num_iterations
@@ -133,6 +146,8 @@ if __name__ == "__main__":
 
     print(default_config)
 
+
+
     ds = load_dataset(default_config["dataset"], "section", split="test")
     prompts = ds[default_config["dataset_key"]]
 
@@ -145,13 +160,14 @@ if __name__ == "__main__":
     )
 
     for ts in from_csv(default_config["tensor_parallel_sizes"]):
+        os.environ["VLLM_TORCH_PROFILER_DIR"] = f"./vllm_profile/{ts}"
         llm = LLM(
             model=default_config["model"],
             tensor_parallel_size=ts,
             enforce_eager=default_config.getboolean(
                 "eager_mode", fallback=False
             ),
-            #enable_chunked_prefill=False,
+            # enable_chunked_prefill=False,
         )
         for bs in from_csv(default_config["batch_sizes"]):
             for pl in from_csv(default_config["prompt_lengths"]):
@@ -171,6 +187,7 @@ if __name__ == "__main__":
                         gl,
                         num_warmups=default_config.getint("num_warmups"),
                         num_iterations=default_config.getint("num_iterations"),
+                        profile=PROFILE
                     )
                     line = (
                         default_config["model"]
