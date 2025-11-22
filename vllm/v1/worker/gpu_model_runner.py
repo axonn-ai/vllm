@@ -218,7 +218,6 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         self.dcp_world_size = self.parallel_config.decode_context_parallel_size
         self.max_num_tokens = scheduler_config.max_num_batched_tokens
         self.max_num_reqs = scheduler_config.max_num_seqs
-        self.nvtx_open = False
 
         # Broadcast PP output for external_launcher (torchrun)
         # to make sure we are synced across pp ranks
@@ -2234,8 +2233,6 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         scheduler_output: "SchedulerOutput",
         intermediate_tensors: Optional[IntermediateTensors] = None,
     ) -> Union[ModelRunnerOutput, AsyncModelRunnerOutput, IntermediateTensors]:
-        #print("executing model")
-        print(f"nvtx_open: {self.nvtx_open}")
         with record_function_or_nullcontext("Preprocess"):
             with self.synchronize_input_prep():
                 # Update persistent batch states.
@@ -2285,7 +2282,6 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         if ubatch_slices is not None:
             num_input_tokens = ubatch_slices[0].num_tokens
 
-
         # Run the model.
         # Use persistent buffers for CUDA graphs.
         with (set_forward_context(
@@ -2299,12 +2295,6 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         ), record_function_or_nullcontext("Forward"),
               self.maybe_get_kv_connector_output(scheduler_output) as
               kv_connector_output):
-            
-            #if cudagraph_runtime_mode == CUDAGraphMode.NONE:
-            #    mode = "Prefill"
-            #else:
-            #    mode = "Decode"
-            #torch.cuda.nvtx.range_push(mode)
             model_output = self.model(
                 input_ids=input_ids,
                 positions=positions,
@@ -2312,7 +2302,6 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                 inputs_embeds=inputs_embeds,
                 **model_kwargs,
             )
-            #torch.cuda.nvtx.range_pop()
 
         with record_function_or_nullcontext("Postprocess"):
             if self.use_aux_hidden_state_outputs:
@@ -2604,16 +2593,6 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             config = getattr(self, config_name)
             new_config = update_config(config, config_overrides)
             setattr(self, config_name, new_config)
-  
-    def start_nvtx_profiling(self) -> None:
-        print("starting nvtx profiling")
-        torch.cuda.nvtx.range_push("Generation")
-        self.nvtx_open = True
-    
-    def stop_nvtx_profiling(self) -> None:
-        print("stopping nvtx profiling")
-        torch.cuda.nvtx.range_pop()
-        self.nvtx_open = False
 
     def load_model(self, eep_scale_up: bool = False) -> None:
         """

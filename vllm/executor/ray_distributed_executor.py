@@ -137,13 +137,9 @@ class RayDistributedExecutor(DistributedExecutorBase):
         runtime_env = ray_remote_kwargs.setdefault("runtime_env", {})
         runtime_env.update({
             "nsight": {
-                "t": "cuda,cudnn,cublas,nvtx",
+                "t": "cuda,cudnn,cublas",
                 "o": "'worker_process_%p'",
                 "cuda-graph-trace": "node",
-                "capture-range": "cudaProfilerApi",
-                "capture-range-end": "stop",
-                "sample": "none",
-                "cpuctxsw": "none"
             }
         })
 

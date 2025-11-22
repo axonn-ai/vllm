@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 import torch
 import torch.distributed
 import torch.nn as nn
-import nvtx
 
 import vllm.envs as envs
 from vllm.config import VllmConfig
@@ -434,17 +433,6 @@ class Worker(WorkerBase):
         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         num_input_tokens = self.model_runner._get_num_input_tokens(
             num_scheduled_tokens)
-        #print(f"nvtx_active: {self._nvtx_active}, nvtx_open: {self._nvtx_open}")
-        if self._nvtx_active and not self._nvtx_open:
-            print("pushing nvtx range")
-            torch.cuda.nvtx.range_push("Generation")
-            self._nvtx_open = True
-
-        if not self._nvtx_active and self._nvtx_open:
-            print("popping nvtx range")
-            torch.cuda.nvtx.range_pop()
-            self._nvtx_open = False
-
         all_gather_tensors = {
             "residual":
             not is_residual_scattered_for_sp(self.vllm_config,
@@ -489,27 +477,7 @@ class Worker(WorkerBase):
 
     def profile(self, is_start: bool = True):
         if self.profiler is None:
-            #raise RuntimeError("Profiler is not enabled.")
-            if is_start:
-                torch.cuda.cudart().cudaProfilerStart()
-                print(f"{self.model_runner}")
-                self.model_runner.start_nvtx_profiling()
-
-                #print("starting nvtx profiling")
-
-                #torch.cuda.nvtx.range_push("Generation")
-                self._nvtx_active = True
-                #self.nvtx_range = nvtx.start_range("Generation", "green")
-            else:
-                #torch.cuda.nvtx.range_pop()
-                self._nvtx_active = False
-                self.model_runner.stop_nvtx_profiling()
-                #print("stopping nvtx profiling")
-                #nvtx.end_range(self.nvtx_range)
-                #nvtx.end_range(self.nvtx_range)
-                torch.cuda.cudart().cudaProfilerStop()
-            return
-
+            raise RuntimeError("Profiler is not enabled.")
         if is_start:
             self.profiler.start()
         else:
