@@ -463,7 +463,9 @@ class ParallelConfig:
         data_parallel_node_size = (
             self.data_parallel_size // self.data_parallel_size_local
         )
-        return self.nnodes // data_parallel_node_size
+        if data_parallel_node_size == 0:
+            return self.nnodes
+        return max(self.nnodes // data_parallel_node_size, 1)
 
     @property
     def local_world_size(self) -> int:

@@ -229,7 +229,7 @@ class CacheConfig:
         total_cpu_memory = get_cpu_memory()
         # FIXME(woosuk): Here, it is assumed that the GPUs in a tensor parallel
         # group are in the same node. However, the GPUs may span multiple nodes.
-        num_gpus_per_node = parallel_config.tensor_parallel_size
+        num_gpus_per_node = 4
         cpu_memory_usage = swap_space_bytes * num_gpus_per_node
 
         msg = (
