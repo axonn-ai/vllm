@@ -40,6 +40,7 @@ import numpy as np
 from tqdm.asyncio import tqdm
 
 from vllm.benchmarks.datasets import SampleRequest, add_dataset_parser, get_samples
+from vllm.benchmarks.parse_metrics import diff_prometheus_metrics
 from vllm.benchmarks.lib.endpoint_request_func import (
     ASYNC_REQUEST_FUNCS,
     OPENAI_COMPATIBLE_BACKENDS,
@@ -84,6 +85,15 @@ async def get_first_model_from_server(
                 "2. The server URL is correct\n"
                 f"Error: {e}"
             ) from e
+
+
+async def fetch_metrics(base_url: str) -> str:
+    """Fetch raw Prometheus metrics text from the server's /metrics endpoint."""
+    metrics_url = f"{base_url}/metrics"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(metrics_url) as response:
+            response.raise_for_status()
+            return await response.text()
 
 
 @dataclass
@@ -1502,6 +1512,13 @@ def add_cli_args(parser: argparse.ArgumentParser):
         default=None,
     )
 
+    parser.add_argument(
+        "--collect-server-metrics",
+        action="store_true",
+        help="Snapshot server /metrics before and after benchmark, "
+        "save histogram diff to a companion *_metrics.json file",
+    )
+
 
 def main(args: argparse.Namespace) -> dict[str, Any]:
     return asyncio.run(main_async(args))
@@ -1653,6 +1670,14 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
     # Avoid GC processing "static" data - reduce pause times.
     freeze_gc_heap()
 
+    # Snapshot server metrics before benchmark
+    metrics_before = None
+    if args.collect_server_metrics:
+        try:
+            metrics_before = await fetch_metrics(base_url)
+        except Exception as e:
+            print(f"WARNING: Failed to fetch pre-benchmark metrics: {e}")
+
     benchmark_result = await benchmark(
         task_type=task_type,
         endpoint_type=backend,
@@ -1681,6 +1706,15 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
         ramp_up_end_rps=args.ramp_up_end_rps,
         ready_check_timeout_sec=args.ready_check_timeout_sec,
     )
+
+    # Snapshot server metrics after benchmark and compute diff
+    server_metrics = None
+    if args.collect_server_metrics and metrics_before is not None:
+        try:
+            metrics_after = await fetch_metrics(base_url)
+            server_metrics = diff_prometheus_metrics(metrics_before, metrics_after)
+        except Exception as e:
+            print(f"WARNING: Failed to fetch post-benchmark metrics: {e}")
 
     # Save config and results to json
     result_json: dict[str, Any] = {}
@@ -1763,5 +1797,12 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
                 outfile.write("\n")
             json.dump(result_json, outfile)
         save_to_pytorch_benchmark_format(args, result_json, file_name)
+
+        # Save server metrics to companion file
+        if args.collect_server_metrics and server_metrics:
+            metrics_filename = file_name.replace(".json", "_metrics.json")
+            with open(metrics_filename, "w") as mf:
+                json.dump(server_metrics, mf, indent=2)
+            print(f"Server metrics saved to {metrics_filename}")
 
     return result_json
