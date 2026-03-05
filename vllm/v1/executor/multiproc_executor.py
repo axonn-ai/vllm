@@ -131,7 +131,7 @@ class MultiprocExecutor(Executor):
                 self.world_size,
                 self.local_world_size,
                 max_chunk_bytes=max_chunk_bytes,
-                connect_ip=self.parallel_config.master_addr,
+                connect_ip=None,
             )
             scheduler_output_handle = self.rpc_broadcast_mq.export_handle()
         # Create workers

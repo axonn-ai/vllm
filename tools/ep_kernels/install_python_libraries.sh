@@ -6,12 +6,14 @@ set -ex
 #   --mode <mode>        "install" (default) or "wheel"
 #   --pplx-ref <commit>  pplx-kernels commit hash
 #   --deepep-ref <commit> DeepEP commit hash
-#   --nvshmem-ver <ver>  NVSHMEM version 
+#   --nvshmem-ver <ver>  NVSHMEM version
+#   --nvshmem-dir <dir>  Local NVSHMEM directory (skips download) 
 
 CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
 PPLX_COMMIT_HASH=${PPLX_COMMIT_HASH:-"12cecfd"}
-DEEPEP_COMMIT_HASH=${DEEPEP_COMMIT_HASH:-"73b6ea4"}
+DEEPEP_COMMIT_HASH=${DEEPEP_COMMIT_HASH:-"nvshmem_native_apis"}
 NVSHMEM_VER=${NVSHMEM_VER:-"3.3.24"}  # Default supports both CUDA 12 and 13
+NVSHMEM_DIR=${NVSHMEM_DIR:-""}  # Local NVSHMEM directory (if provided, skip download)
 WORKSPACE=${WORKSPACE:-$(pwd)/ep_kernels_workspace}
 MODE=${MODE:-install}
 CUDA_VERSION_MAJOR=$(${CUDA_HOME}/bin/nvcc --version | egrep -o "release [0-9]+" | cut -d ' ' -f 2)
@@ -63,6 +65,14 @@ while [[ $# -gt 0 ]]; do
             NVSHMEM_VER="$2"
             shift 2
             ;;
+        --nvshmem-dir)
+            if [[ -z "$2" || "$2" =~ ^- ]]; then
+                echo "Error: --nvshmem-dir requires an argument." >&2
+                exit 1
+            fi
+            NVSHMEM_DIR="$2"
+            shift 2
+            ;;
         *)
             echo "Error: Unknown argument '$1'" >&2
             exit 1
@@ -92,31 +102,48 @@ else
 fi
 
 # fetch nvshmem
-ARCH=$(uname -m)
-case "${ARCH,,}" in
-  x86_64|amd64)
-    NVSHMEM_SUBDIR="linux-x86_64"
-    ;;
-  aarch64|arm64)
-    NVSHMEM_SUBDIR="linux-sbsa"
-    ;;
-  *)
-    echo "Unsupported architecture: ${ARCH}" >&2
-    exit 1
-    ;;
-esac
+if [ -n "$NVSHMEM_DIR" ]; then
+    # Use local NVSHMEM build
+    if [ ! -d "$NVSHMEM_DIR" ]; then
+        echo "Error: NVSHMEM_DIR '$NVSHMEM_DIR' does not exist." >&2
+        exit 1
+    fi
+    if [ ! -d "$NVSHMEM_DIR/lib/cmake" ]; then
+        echo "Error: NVSHMEM_DIR '$NVSHMEM_DIR' does not contain lib/cmake (invalid NVSHMEM installation)." >&2
+        exit 1
+    fi
+    echo "Using local NVSHMEM from $NVSHMEM_DIR"
+    # Create symlink or copy to workspace for consistent handling
+    rm -rf "$WORKSPACE/nvshmem"
+    ln -sf "$NVSHMEM_DIR" "$WORKSPACE/nvshmem"
+else
+    # Download NVSHMEM from NVIDIA
+    ARCH=$(uname -m)
+    case "${ARCH,,}" in
+      x86_64|amd64)
+        NVSHMEM_SUBDIR="linux-x86_64"
+        ;;
+      aarch64|arm64)
+        NVSHMEM_SUBDIR="linux-sbsa"
+        ;;
+      *)
+        echo "Unsupported architecture: ${ARCH}" >&2
+        exit 1
+        ;;
+    esac
 
-NVSHMEM_FILE="libnvshmem-${NVSHMEM_SUBDIR}-${NVSHMEM_VER}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz"
-NVSHMEM_URL="https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/${NVSHMEM_SUBDIR}/${NVSHMEM_FILE}"
+    NVSHMEM_FILE="libnvshmem-${NVSHMEM_SUBDIR}-${NVSHMEM_VER}_cuda${CUDA_VERSION_MAJOR}-archive.tar.xz"
+    NVSHMEM_URL="https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/${NVSHMEM_SUBDIR}/${NVSHMEM_FILE}"
 
-pushd "$WORKSPACE"
-echo "Downloading NVSHMEM ${NVSHMEM_VER} for ${NVSHMEM_SUBDIR} ..."
-curl -fSL "${NVSHMEM_URL}" -o "${NVSHMEM_FILE}"
-tar -xf "${NVSHMEM_FILE}"
-mv "${NVSHMEM_FILE%.tar.xz}" nvshmem
-rm -f "${NVSHMEM_FILE}"
-rm -rf nvshmem/lib/bin nvshmem/lib/share
-popd
+    pushd "$WORKSPACE"
+    echo "Downloading NVSHMEM ${NVSHMEM_VER} for ${NVSHMEM_SUBDIR} ..."
+    curl -fSkL "${NVSHMEM_URL}" -o "${NVSHMEM_FILE}"
+    tar -xf "${NVSHMEM_FILE}"
+    mv "${NVSHMEM_FILE%.tar.xz}" nvshmem
+    rm -f "${NVSHMEM_FILE}"
+    rm -rf nvshmem/lib/bin nvshmem/lib/share
+    popd
+fi
 
 export CMAKE_PREFIX_PATH=$WORKSPACE/nvshmem/lib/cmake:$CMAKE_PREFIX_PATH
 
@@ -198,7 +225,7 @@ do_build \
 
 # build DeepEP
 do_build \
-    "https://github.com/deepseek-ai/DeepEP" \
+    "https://github.com/seth-howell/DeepEP" \
     "DeepEP" \
     "setup.py" \
     "$DEEPEP_COMMIT_HASH" \
