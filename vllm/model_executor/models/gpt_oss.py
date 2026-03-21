@@ -89,8 +89,13 @@ class OAIAttention(nn.Module):
             torch.empty(config.num_attention_heads // tp_size, requires_grad=False)
         )
 
-        self.q_size = self.num_attention_heads * self.head_dim // tp_size
-        self.kv_size = self.num_key_value_heads * self.head_dim // tp_size
+        self.num_local_heads = config.num_attention_heads // tp_size
+        if tp_size >= self.num_key_value_heads:
+            self.num_local_kv_heads = 1
+        else:
+            self.num_local_kv_heads = self.num_key_value_heads // tp_size
+        self.q_size = self.num_local_heads * self.head_dim
+        self.kv_size = self.num_local_kv_heads * self.head_dim
         self.scaling = self.head_dim**-0.5
 
         self.qkv_proj = QKVParallelLinear(
@@ -109,8 +114,8 @@ class OAIAttention(nn.Module):
             prefix=f"{prefix}.o_proj",
         )
 
-        self.num_local_attention_heads = config.num_attention_heads // tp_size
-        self.num_local_key_value_heads = config.num_key_value_heads // tp_size
+        self.num_local_attention_heads = self.num_local_heads
+        self.num_local_key_value_heads = self.num_local_kv_heads
 
         # Only apply sliding window to every other layer
         sliding_window = config.sliding_window if self.layer_idx % 2 == 0 else None
@@ -624,7 +629,7 @@ class GptOssModel(nn.Module):
         head_start = tp_rank * heads_per_rank
 
         ep_size = get_ep_group().world_size
-        ep_rank = get_ep_group().rank
+        ep_rank = get_ep_group().rank_in_group
         num_experts = self.config.num_local_experts
         experts_per_rank = num_experts // ep_size
         ep_rank_start = ep_rank * experts_per_rank
