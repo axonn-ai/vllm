@@ -6,6 +6,7 @@
 import torch
 import torch.distributed as dist
 from torch.distributed import ProcessGroup, ReduceOp
+import os
 
 import vllm.envs as envs
 from vllm.distributed.device_communicators.pynccl_wrapper import (
@@ -87,6 +88,8 @@ class PyNcclCommunicator:
 
         self.group = group
 
+        print(f"[DEBUG] PyNcclCommunicator.__init__ called, world_size={self.world_size}, rank={self.rank}")
+
         # if world_size == 1, no need to create communicator
         if self.world_size == 1 or envs.VLLM_DISABLE_PYNCCL:
             self.available = False
@@ -94,15 +97,19 @@ class PyNcclCommunicator:
             return
         try:
             self.nccl = NCCLLibrary(library_path)
-        except Exception:
+        except Exception as e:
             # disable because of missing NCCL library
             # e.g. in a non-GPU environment
+            print(f"[DEBUG] NCCLLibrary failed: {e}")
             self.available = False
             self.disabled = True
             return
 
         self.available = True
         self.disabled = False
+
+        self.use_nvrar = os.environ.get("USE_NVRAR", "0").lower() in ("1", "true", "yes")
+        self.nvrar_comm = None
 
         self.nccl_version = self.nccl.ncclGetRawVersion()
         if self.rank == 0:
@@ -147,6 +154,73 @@ class PyNcclCommunicator:
             stream.synchronize()
             del data
 
+        if self.use_nvrar:
+            from nvrar import nvshmem_comm_cuda as nvshmem_comm_cuda
+
+            unique_id = nvshmem_comm_cuda.NVSHMEMCommWrapper.get_unique_id_bytes()
+            ranks = dist.get_process_group_ranks(self.group)
+            dist.broadcast(unique_id, src=ranks[0], group=self.group)
+            dist.barrier(group=self.group)
+
+            self.nvrar_comm = nvshmem_comm_cuda.NVSHMEMCommWrapper(
+                self.rank, self.world_size, self.device.index, unique_id
+            )
+            logger.info(
+                "NVSHMEMCommunicator created for process group %s "
+                "with rank %d and nranks %d",
+                self.group, self.rank, self.world_size,
+            )
+
+            NVRAR_MIN_BYTES = 128 * 1024       # 128KB
+            NVRAR_MAX_BYTES = 8 * 1024 * 1024   # 4MB
+            NVRAR_DTYPE = torch.bfloat16
+            NVRAR_ELEM_SIZE = 2  # bytes per bf16
+
+            self.nvrar_buffers = {}        # {num_elements: (tensor, tensor_id)}
+
+            size_bytes = NVRAR_MIN_BYTES
+            while size_bytes <= NVRAR_MAX_BYTES:
+                num_elements = size_bytes // NVRAR_ELEM_SIZE
+                tensor, tensor_id = self.nvrar_comm.allocate_tensor(
+                    num_elements, NVRAR_DTYPE, self.device,
+                    nvshmem_comm_cuda.Protocol.LL8)
+                self.nvrar_buffers[num_elements] = (tensor, tensor_id)
+                config = self.get_launch_config(
+                    self.world_size, num_elements, NVRAR_DTYPE)
+                self.nvrar_comm.set_kernel_params_for_tensor(
+                    tensor_id,
+                    config["num_blocks"],
+                    config["threads_per_block"],
+                    config["chunk_bytes"],
+                )
+                size_bytes *= 2
+
+            logger.info(
+                "NVRAR buffer pool initialized with %d sizes: %s",
+                len(self.nvrar_buffers),
+                sorted(self.nvrar_buffers.keys()),
+            )
+
+    def get_launch_config(self, num_gpus: int, message_bytes: int,
+                          dtype: torch.dtype):
+        from nvrar import resolve_params
+        dtype_str = str(dtype).split(".")[-1]
+        return resolve_params(num_gpus, dtype_str).for_message_bytes(
+            message_bytes)
+
+    def _is_nvrar_eligible(self, tensor: torch.Tensor) -> bool:
+        """Check if tensor is eligible for NVRAR.
+
+        Eligible tensors must be bf16, power-of-2 byte size, 128KB-4MB.
+        """
+        if tensor.dtype != torch.bfloat16:
+            return False
+        byte_size = tensor.numel() * tensor.element_size()
+        if byte_size < 128 * 1024 or byte_size > 4 * 1024 * 1024:
+            return False
+        # power-of-2 check
+        return (byte_size & (byte_size - 1)) == 0
+
     def all_reduce(
         self,
         in_tensor: torch.Tensor,
@@ -164,21 +238,37 @@ class PyNcclCommunicator:
             f"but the input tensor is on {in_tensor.device}"
         )
 
-        if out_tensor is None:
-            out_tensor = torch.empty_like(in_tensor)
+        if self.use_nvrar and self.nvrar_comm is not None \
+                and self._is_nvrar_eligible(in_tensor):
+            assert out_tensor is None
 
-        if stream is None:
-            stream = current_stream()
-        self.nccl.ncclAllReduce(
-            buffer_type(in_tensor.data_ptr()),
-            buffer_type(out_tensor.data_ptr()),
-            in_tensor.numel(),
-            ncclDataTypeEnum.from_torch(in_tensor.dtype),
-            ncclRedOpTypeEnum.from_torch(op),
-            self.comm,
-            cudaStream_t(stream.cuda_stream),
-        )
-        return out_tensor
+            num_elements = in_tensor.numel()
+            buf_tensor, buf_id = self.nvrar_buffers[num_elements]
+
+            buf_tensor.copy_(in_tensor.reshape(-1))
+            if stream is None:
+                stream = current_stream()
+            self.nvrar_comm.allreduce_preallocated(
+                buf_tensor, buf_id, stream.cuda_stream, "recursive")
+
+            return buf_tensor.clone().reshape(in_tensor.shape)
+
+        else:
+            if out_tensor is None:
+                out_tensor = torch.empty_like(in_tensor)
+
+            if stream is None:
+                stream = current_stream()
+            self.nccl.ncclAllReduce(
+                buffer_type(in_tensor.data_ptr()),
+                buffer_type(out_tensor.data_ptr()),
+                in_tensor.numel(),
+                ncclDataTypeEnum.from_torch(in_tensor.dtype),
+                ncclRedOpTypeEnum.from_torch(op),
+                self.comm,
+                cudaStream_t(stream.cuda_stream),
+            )
+            return out_tensor
 
     def all_gather(
         self, output_tensor: torch.Tensor, input_tensor: torch.Tensor, stream=None

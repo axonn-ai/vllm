@@ -152,6 +152,9 @@ class Worker(WorkerBase):
         # pending non-blocking PP send work from the previous iteration
         self._pp_send_work: list[Handle] = []
 
+        self._nvtx_active = False
+        self._nvtx_open = False
+
     def sleep(self, level: int = 1) -> None:
         from vllm.device_allocator.cumem import CuMemAllocator
 
