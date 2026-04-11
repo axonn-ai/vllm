@@ -96,6 +96,9 @@ class Worker(WorkerBase):
         else:
             self.profiler = None
 
+        self._nvtx_active = False
+        self._nvtx_open = False
+
     def sleep(self, level: int = 1) -> None:
         from vllm.device_allocator.cumem import CuMemAllocator
 
