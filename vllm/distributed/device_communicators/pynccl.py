@@ -108,7 +108,7 @@ class PyNcclCommunicator:
         self.available = True
         self.disabled = False
 
-        self.use_nvrar = os.environ.get("USE_NVRAR", "0").lower() in ("1", "true", "yes")
+        self.use_nvrar = os.environ.get("USE_NVRAR", "1").lower() in ("1", "true", "yes")
         self.nvrar_comm = None
 
         self.nccl_version = self.nccl.ncclGetRawVersion()
@@ -172,7 +172,7 @@ class PyNcclCommunicator:
             )
 
             NVRAR_MIN_BYTES = 128 * 1024       # 128KB
-            NVRAR_MAX_BYTES = 8 * 1024 * 1024   # 4MB
+            NVRAR_MAX_BYTES = 8 * 1024 * 1024   # 8MB
             NVRAR_DTYPE = torch.bfloat16
             NVRAR_ELEM_SIZE = 2  # bytes per bf16
 
@@ -211,14 +211,13 @@ class PyNcclCommunicator:
     def _is_nvrar_eligible(self, tensor: torch.Tensor) -> bool:
         """Check if tensor is eligible for NVRAR.
 
-        Eligible tensors must be bf16, power-of-2 byte size, 128KB-4MB.
+        Eligible tensors must be bf16, power-of-2 byte size, 128KB-8MB.
         """
         if tensor.dtype != torch.bfloat16:
             return False
         byte_size = tensor.numel() * tensor.element_size()
-        if byte_size < 128 * 1024 or byte_size > 4 * 1024 * 1024:
+        if byte_size < 128 * 1024 or byte_size > 8 * 1024 * 1024:
             return False
-        # power-of-2 check
         return (byte_size & (byte_size - 1)) == 0
 
     def all_reduce(
@@ -243,6 +242,15 @@ class PyNcclCommunicator:
             assert out_tensor is None
 
             num_elements = in_tensor.numel()
+            if not hasattr(self, "_nvrar_logged_shapes"):
+                self._nvrar_logged_shapes = set()
+            key = (tuple(in_tensor.shape), str(in_tensor.dtype))
+            if key not in self._nvrar_logged_shapes:
+                self._nvrar_logged_shapes.add(key)
+                logger.info(
+                    "[NVRAR] all_reduce via NVRAR: shape=%s dtype=%s bytes=%d",
+                    tuple(in_tensor.shape), in_tensor.dtype,
+                    in_tensor.numel() * in_tensor.element_size())
             buf_tensor, buf_id = self.nvrar_buffers[num_elements]
 
             buf_tensor.copy_(in_tensor.reshape(-1))
@@ -254,6 +262,16 @@ class PyNcclCommunicator:
             return buf_tensor.clone().reshape(in_tensor.shape)
 
         else:
+            if not hasattr(self, "_nccl_logged_shapes"):
+                self._nccl_logged_shapes = set()
+            key = (tuple(in_tensor.shape), str(in_tensor.dtype))
+            if key not in self._nccl_logged_shapes:
+                self._nccl_logged_shapes.add(key)
+                reason = "disabled" if not self.use_nvrar else "ineligible"
+                logger.info(
+                    "[NVRAR] all_reduce via NCCL (%s): shape=%s dtype=%s bytes=%d",
+                    reason, tuple(in_tensor.shape), in_tensor.dtype,
+                    in_tensor.numel() * in_tensor.element_size())
             if out_tensor is None:
                 out_tensor = torch.empty_like(in_tensor)
 
